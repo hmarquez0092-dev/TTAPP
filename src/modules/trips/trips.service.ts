@@ -72,15 +72,10 @@ export class TripsService {
     // passengerId distinto — y ese caso queda auditado explicitamente.
     let passengerId = currentUser.id;
     if (currentUser.role !== 'PASSENGER' && dto.passengerId) {
+      if (!['OPERATOR', 'ADMIN'].includes(currentUser.role) || !currentUser.permissions.includes('trips.manage')) {
+        throw new ForbiddenException('Requiere el permiso trips.manage para crear viajes a nombre de terceros');
+      }
       passengerId = dto.passengerId;
-      await this.auditService.record({
-        actorUserId: currentUser.id,
-        action: 'trip.create_on_behalf',
-        entity: 'trips',
-        entityId: 'pending',
-        newValue: { passengerId, createdBy: currentUser.id },
-        reason: 'Viaje creado por staff a nombre de otro pasajero',
-      });
     }
 
     const origin = toGeoPoint(dto.origin);
@@ -109,6 +104,17 @@ export class TripsService {
       securityCode: String(Math.floor(1000 + Math.random() * 9000)),
     });
     await this.trips.save(trip);
+
+    if (passengerId !== currentUser.id) {
+      await this.auditService.record({
+        actorUserId: currentUser.id,
+        action: 'trip.create_on_behalf',
+        entity: 'trips',
+        entityId: trip.id,
+        newValue: { passengerId, createdBy: currentUser.id },
+        reason: 'Viaje creado por staff a nombre de otro pasajero',
+      });
+    }
 
     await this.recordEvent(trip.id, null, trip.status, currentUser.id, 'trip_requested');
 
@@ -152,13 +158,24 @@ export class TripsService {
     });
   }
 
-  async findOne(tripId: string): Promise<Trip> {
+  async findOne(tripId: string, currentUser?: AuthenticatedUser): Promise<Trip> {
     const trip = await this.trips.findOne({
       where: { id: tripId },
       relations: ['passenger', 'driver', 'vehicle', 'quotedBy', 'fareRule'],
     });
     if (!trip) throw new NotFoundException('Viaje no encontrado');
+    if (currentUser && !this.canViewTrip(trip, currentUser)) {
+      throw new ForbiddenException('No tienes acceso a este viaje');
+    }
     return trip;
+  }
+
+  private canViewTrip(trip: Trip, currentUser: AuthenticatedUser): boolean {
+    if (['OPERATOR', 'ADMIN', 'FINANCE'].includes(currentUser.role)) return true;
+    return (
+      (currentUser.role === 'PASSENGER' && trip.passenger?.userId === currentUser.id) ||
+      (currentUser.role === 'DRIVER' && trip.driver?.userId === currentUser.id)
+    );
   }
 
   private async loadForMutation(tripId: string): Promise<Trip> {
@@ -385,6 +402,24 @@ export class TripsService {
     }
 
     return this.dataSource.transaction(async (manager) => {
+      const lockedTrip = await manager.findOne(Trip, {
+        where: { id: tripId },
+        relations: ['driver', 'passenger'],
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!lockedTrip) throw new NotFoundException('Viaje no encontrado');
+      if (!lockedTrip.driver || lockedTrip.driver.userId !== currentUser.id) {
+        throw new ForbiddenException('Solo el conductor asignado puede confirmar el pago');
+      }
+
+      const existingPayment = await manager.findOne(Payment, {
+        where: { trip: { id: tripId } },
+      });
+      if (existingPayment) return existingPayment;
+      if (lockedTrip.status !== TripStatus.PAYMENT_PENDING) {
+        throw new ConflictException('El pago de este viaje ya fue confirmado');
+      }
+
       const payment = manager.create(Payment, {
         trip: { id: tripId } as any,
         amount: dto.amount,
@@ -412,6 +447,19 @@ export class TripsService {
         driverEarning,
       });
       await manager.save(commission);
+
+      await manager.query(
+        `INSERT INTO driver_settlements
+           (driver_id, period_start, period_end, total_earnings, total_commission, status)
+         VALUES ($1, date_trunc('week', CURRENT_DATE)::date,
+                    (date_trunc('week', CURRENT_DATE) + interval '6 days')::date,
+                    $2, $3, 'OPEN')
+         ON CONFLICT (driver_id, period_start, period_end)
+         DO UPDATE SET
+           total_earnings = driver_settlements.total_earnings + EXCLUDED.total_earnings,
+           total_commission = driver_settlements.total_commission + EXCLUDED.total_commission`,
+        [lockedTrip.driver.userId, finalFare, commissionAmount],
+      );
 
       await manager.update(Trip, tripId, { status: TripStatus.PAYMENT_CONFIRMED });
       await manager.save(

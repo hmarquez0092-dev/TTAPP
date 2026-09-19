@@ -58,5 +58,22 @@ export function validate(config: Record<string, unknown>) {
         .join('\n')}`,
     );
   }
+
+  const environment = validatedConfig.NODE_ENV;
+  const jwtSecret = String(validatedConfig.JWT_SECRET ?? '');
+  const forbiddenSecrets = new Set([
+    'changeme',
+    'dev-only-secret-not-for-production',
+    'test-secret',
+    'staging-secret',
+    'production-secret',
+  ]);
+  if (
+    (environment === Environment.Staging || environment === Environment.Production) &&
+    (jwtSecret.length < 32 || forbiddenSecrets.has(jwtSecret.toLowerCase()))
+  ) {
+    throw new Error('JWT_SECRET debe ser un secreto real de al menos 32 caracteres en staging/production');
+  }
+
   return validatedConfig;
 }

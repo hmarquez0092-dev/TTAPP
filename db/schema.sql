@@ -344,7 +344,7 @@ CREATE TABLE payment_transactions (
 -- deuda pendiente que se liquida después (ver driver_settlements).
 CREATE TABLE commissions (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    trip_id            UUID NOT NULL REFERENCES trips(id),
+    trip_id            UUID NOT NULL UNIQUE REFERENCES trips(id),
     gross_amount       NUMERIC(10,2) NOT NULL,
     commission_pct     NUMERIC(5,2) NOT NULL,
     commission_amount  NUMERIC(10,2) NOT NULL,  -- deuda del conductor con la empresa por este viaje
@@ -365,6 +365,7 @@ CREATE TABLE driver_settlements (
     status            TEXT NOT NULL DEFAULT 'OPEN',  -- OPEN, RECONCILED, PAID
     reconciled_by     UUID REFERENCES users(id),
     reconciled_at     TIMESTAMPTZ
+    ,UNIQUE (driver_id, period_start, period_end)
 );
 
 -- Rastro auditable de cada pago que el conductor hace a la empresa para

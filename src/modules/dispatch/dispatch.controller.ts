@@ -28,6 +28,7 @@ export class DispatchController {
     return toTripResponse(updated);
   }
 
+  @RequirePermissions('dispatch.offers.view')
   @Get('dispatch/offers/pending')
   async pendingOffers(@CurrentUser() user: AuthenticatedUser) {
     const offers = await this.dispatchService.getPendingOffersForDriver(user.id);
@@ -40,6 +41,7 @@ export class DispatchController {
     }));
   }
 
+  @RequirePermissions('dispatch.candidates.view')
   @Get('trips/:tripId/dispatch/candidates')
   async candidates(@Param('tripId') tripId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.dispatchService.getRankedCandidates(tripId, user.organizationId);

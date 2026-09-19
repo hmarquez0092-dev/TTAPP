@@ -29,8 +29,8 @@ export class TripsController {
   }
 
   @Get(':tripId')
-  async findOne(@Param('tripId') tripId: string) {
-    const trip = await this.tripsService.findOne(tripId);
+  async findOne(@Param('tripId') tripId: string, @CurrentUser() user: AuthenticatedUser) {
+    const trip = await this.tripsService.findOne(tripId, user);
     return toTripResponse(trip);
   }
 

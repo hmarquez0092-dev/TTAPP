@@ -42,9 +42,9 @@ import { ConfigurationModule } from './modules/configuration/configuration.modul
     AuditModule, // global — cualquier modulo puede inyectar AuditService
     EventEmitterModule.forRoot(), // TripsService -> 'trip.quoted' -> DispatchService (evita ciclo de modulos)
     ScheduleModule.forRoot(), // cron de expiracion de ofertas (DispatchExpiryService)
-    // 5 intentos por minuto por IP+ruta — sobre todo para /auth/login
+    // 5 intentos por 15 minutos por IP+ruta — sobre todo para /auth/login
     // (fuerza bruta). docs/03-especificacion-paso8.md, seccion 2.1.
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 5 }]),
+    ThrottlerModule.forRoot([{ ttl: 900000, limit: 5 }]),
 
     // Modulos de dominio, en el mismo orden del alcance congelado
     // (docs/01-fundamentos-tecnicos.md, Paso 1)

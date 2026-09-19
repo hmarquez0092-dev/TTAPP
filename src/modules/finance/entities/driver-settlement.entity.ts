@@ -1,4 +1,4 @@
-import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { DriverProfile } from '../../drivers/entities/driver-profile.entity';
 import { User } from '../../users/entities/user.entity';
 
@@ -6,6 +6,7 @@ import { User } from '../../users/entities/user.entity';
 // totalCommission = lo que el conductor debe pagarle a la empresa en ese
 // periodo, no lo que la empresa le paga a el.
 @Entity('driver_settlements')
+@Index(['driver', 'periodStart', 'periodEnd'], { unique: true })
 export class DriverSettlement {
   @PrimaryGeneratedColumn('uuid')
   id: string;

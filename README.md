@@ -55,6 +55,7 @@ npm install --legacy-peer-deps
 
 # 2. Crear la base de datos y aplicar el esquema (una sola vez)
 createdb taxi_pilot_dev
+psql -d taxi_pilot_dev -f db/schema.sql
 psql -d taxi_pilot_dev -f ../db/schema.sql
 
 # 3. Variables de entorno: ya viene .env.development listo para desarrollo

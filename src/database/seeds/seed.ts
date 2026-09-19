@@ -14,6 +14,8 @@ const PERMISSIONS = [
   'trips.manage',
   'trips.review',
   'dispatch.manual_assign',
+  'dispatch.offers.view',
+  'dispatch.candidates.view',
   'fares.edit',
   'fares.publish',
   'drivers.manage',
@@ -32,7 +34,7 @@ const ROLES: Record<string, string[]> = {
   ADMIN: PERMISSIONS,
   OPERATOR: ['trips.view', 'trips.manage', 'trips.review', 'dispatch.manual_assign', 'fares.edit'],
   FINANCE: ['finance.view', 'finance.reconcile', 'trips.view'],
-  DRIVER: [],
+  DRIVER: ['dispatch.offers.view', 'dispatch.candidates.view'],
   PASSENGER: [],
 };
 

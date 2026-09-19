@@ -95,6 +95,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: El usuario no tiene permiso para crear el viaje a nombre de terceros
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
     get:
       tags: [Trips]
@@ -144,6 +150,8 @@ paths:
                 $ref: '#/components/schemas/Trip'
         '404':
           $ref: '#/components/responses/NotFound'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /trips/{tripId}/review:
     parameters:
@@ -174,6 +182,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /trips/{tripId}/arrive:
     parameters:
@@ -188,6 +198,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Trip'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /trips/{tripId}/start:
     parameters:
@@ -219,6 +233,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /trips/{tripId}/complete:
     parameters:
@@ -237,6 +253,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Trip'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /trips/{tripId}/payment:
     parameters:
@@ -263,6 +283,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Payment'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /trips/{tripId}/cancel:
     parameters:
@@ -540,6 +564,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: El usuario autenticado no puede acceder a este recurso
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: El recurso no permite la transición solicitada o ya fue procesado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
 
   schemas:
     Coordinates:
@@ -608,11 +644,15 @@ components:
 
     TripCreateRequest:
       type: object
-      required: [passengerId, origin, destination]
+      required: [origin, destination]
       properties:
         passengerId:
           type: string
           format: uuid
+          nullable: true
+          description: >
+            Solo OPERATOR/ADMIN con permiso trips.manage pueden usarlo.
+            PASSENGER siempre usa el id del token y este campo se ignora.
         origin:
           $ref: '#/components/schemas/Coordinates'
         destination:

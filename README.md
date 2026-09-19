@@ -56,6 +56,7 @@ npm install --legacy-peer-deps
 # 2. Crear la base de datos y aplicar el esquema (una sola vez)
 createdb taxi_pilot_dev
 psql -d taxi_pilot_dev -f db/schema.sql
+psql -d taxi_pilot_dev -f ../db/schema.sql
 
 # 3. Variables de entorno: ya viene .env.development listo para desarrollo
 #    local (ajustar si tu Postgres/Redis usan otras credenciales)
@@ -99,10 +100,10 @@ src/
 
 ## Ambientes
 
-El repositorio solo contiene `.env.example`. Cada ambiente carga sus valores
-desde el gestor de secretos o desde un archivo local ignorado (`.env.development`,
-`.env.test`, `.env.staging` o `.env.production`); ningún secreto real se
-versiona.
+Cuatro archivos de entorno, uno por ambiente (`docs/01-fundamentos-tecnicos.md`
+Paso 5): `.env.development`, `.env.test`, `.env.staging`, `.env.production`.
+Los dos últimos son plantillas — sus valores reales deben venir de un
+gestor de secretos, nunca commitearse.
 
 ## Desarrollo local sin Docker
 

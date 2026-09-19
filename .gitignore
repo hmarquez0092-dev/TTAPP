@@ -11,6 +11,10 @@ coverage/
 .env
 .env.*
 !.env.example
+.env.development
+.env.test
+.env.staging
+.env.production
 
 # OS/editor
 .DS_Store

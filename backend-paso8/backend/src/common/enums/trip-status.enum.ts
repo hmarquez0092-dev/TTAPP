@@ -1,0 +1,24 @@
+// Debe coincidir exactamente con trip_status en db/schema.sql
+// PENDING_REVIEW es exclusivo de FORANEO: un operador del centro de
+// monitoreo debe cotizar (POST /trips/{id}/review) y asignar manualmente
+// (POST /dispatch/manual-assign) antes de que el viaje pueda avanzar.
+export enum TripStatus {
+  REQUESTED = 'REQUESTED',
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  QUOTED = 'QUOTED',
+  SEARCHING_DRIVER = 'SEARCHING_DRIVER',
+  DRIVER_ASSIGNED = 'DRIVER_ASSIGNED',
+  DRIVER_EN_ROUTE = 'DRIVER_EN_ROUTE',
+  DRIVER_ARRIVED = 'DRIVER_ARRIVED',
+  TRIP_STARTED = 'TRIP_STARTED',
+  TRIP_IN_PROGRESS = 'TRIP_IN_PROGRESS',
+  TRIP_COMPLETED = 'TRIP_COMPLETED',
+  PAYMENT_PENDING = 'PAYMENT_PENDING',
+  PAYMENT_CONFIRMED = 'PAYMENT_CONFIRMED',
+  CLOSED = 'CLOSED',
+  CANCELLED_BY_PASSENGER = 'CANCELLED_BY_PASSENGER',
+  CANCELLED_BY_DRIVER = 'CANCELLED_BY_DRIVER',
+  CANCELLED_BY_SYSTEM = 'CANCELLED_BY_SYSTEM',
+  NO_SHOW = 'NO_SHOW',
+  DISPUTED = 'DISPUTED',
+}

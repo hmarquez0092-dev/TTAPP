@@ -1,0 +1,780 @@
+openapi: 3.0.3
+info:
+  title: Sistema de Taxis — API del Piloto (Viajes y Despacho)
+  version: "1.0.0"
+  description: >
+    Contrato de API para el ciclo de vida del viaje y el motor de despacho,
+    construido sobre db/schema.sql y las decisiones de docs/01-fundamentos-tecnicos.md.
+    Alcance de este archivo: módulos TRP, DSP, GPS (envío de posición),
+    FAR (cotización), PAY (confirmación de cobro) y RAT (calificación).
+    AUTH y los CRUD administrativos (usuarios, vehículos, tarifas) se
+    documentan en un archivo aparte.
+
+servers:
+  - url: https://api.piloto.taxis.mx/v1
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Trips
+    description: Ciclo de vida completo del viaje
+  - name: Dispatch
+    description: Búsqueda de candidatos y asignación de conductor
+  - name: Drivers
+    description: Estado y ubicación del conductor
+  - name: Fares
+    description: Cotización de tarifas
+  - name: Payments
+    description: Confirmación de cobro (efectivo / terminal)
+  - name: Ratings
+    description: Calificaciones post-viaje
+
+paths:
+  # ------------------------------------------------------------------
+  # TARIFAS — cotización previa, sin crear el viaje todavía
+  # ------------------------------------------------------------------
+  /fares/quote:
+    post:
+      tags: [Fares]
+      summary: Obtener una cotización estimada antes de solicitar el viaje
+      description: >
+        No crea un viaje. Determina la categoría de servicio aplicable
+        (NORMAL, NOCTURNO o FORANEO) según destino y horario, y devuelve
+        una tarifa estimada. Si la categoría resultante es FORANEO,
+        `estimatedFare` viene vacío porque esa tarifa la fija un operador.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FareQuoteRequest'
+      responses:
+        '200':
+          description: Cotización calculada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FareQuoteResponse'
+        '422':
+          description: Origen o destino fuera de cualquier zona configurada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ------------------------------------------------------------------
+  # VIAJES
+  # ------------------------------------------------------------------
+  /trips:
+    post:
+      tags: [Trips]
+      summary: Solicitar un viaje
+      description: >
+        Crea el viaje. Si la categoría resultante es NORMAL o NOCTURNO,
+        el viaje queda en estado QUOTED con `quotedFare` ya calculado y
+        se dispara el despacho automático (ver /trips/{tripId}/dispatch/start).
+        Si es FORANEO, el viaje queda en PENDING_REVIEW sin tarifa ni
+        despacho: un operador debe intervenir vía /trips/{tripId}/review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TripCreateRequest'
+      responses:
+        '201':
+          description: Viaje creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '422':
+          description: Origen o destino fuera de cualquier zona configurada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      tags: [Trips]
+      summary: Listar viajes (uso principal del centro de monitoreo)
+      parameters:
+        - name: status
+          in: query
+          description: Filtra por uno o más estados, ej. status=PENDING_REVIEW
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/TripStatus'
+          style: form
+          explode: true
+        - name: driverId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: passengerId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Lista de viajes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Trip'
+
+  /trips/{tripId}:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [Trips]
+      summary: Consultar el estado actual de un viaje
+      responses:
+        '200':
+          description: Detalle del viaje
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /trips/{tripId}/review:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Trips]
+      summary: Revisar y cotizar un viaje FORANEO (solo centro de monitoreo)
+      description: >
+        Único endpoint que puede mover un viaje de PENDING_REVIEW a QUOTED.
+        No dispara despacho automático — el siguiente paso es siempre
+        /dispatch/manual-assign.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForaneoReviewRequest'
+      responses:
+        '200':
+          description: Viaje cotizado manualmente, listo para asignación manual
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '409':
+          description: El viaje no está en PENDING_REVIEW
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /trips/{tripId}/arrive:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Trips]
+      summary: Conductor marca que llegó al punto de origen
+      responses:
+        '200':
+          description: Viaje en DRIVER_ARRIVED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+
+  /trips/{tripId}/start:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Trips]
+      summary: Iniciar el viaje
+      description: Valida `securityCode` contra trips.security_code antes de iniciar.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [securityCode]
+              properties:
+                securityCode:
+                  type: string
+      responses:
+        '200':
+          description: Viaje en TRIP_IN_PROGRESS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '403':
+          description: Código de seguridad incorrecto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /trips/{tripId}/complete:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Trips]
+      summary: Finalizar el viaje
+      description: >
+        Calcula `finalFare` con la distancia y duración reales recorridas
+        (a partir de driver_location_history) usando el mismo fare_rule
+        aplicado en la cotización. Deja el viaje en PAYMENT_PENDING.
+      responses:
+        '200':
+          description: Viaje en PAYMENT_PENDING, con finalFare calculado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+
+  /trips/{tripId}/payment:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Payments]
+      summary: Confirmar el cobro (efectivo o terminal del conductor)
+      description: >
+        Confirmación manual del conductor — no hay notificación automática
+        de una pasarela porque el dinero no pasa por la plataforma en
+        CASH ni en CARD_TERMINAL. Mueve el viaje a PAYMENT_CONFIRMED y
+        genera la fila correspondiente en `commissions` (deuda del
+        conductor con la empresa, no un pago que recibe).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentConfirmRequest'
+      responses:
+        '200':
+          description: Pago confirmado, viaje cerrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+
+  /trips/{tripId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Trips]
+      summary: Cancelar el viaje
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cancelledBy, reason]
+              properties:
+                cancelledBy:
+                  type: string
+                  enum: [PASSENGER, DRIVER, SYSTEM]
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Viaje cancelado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+
+  /trips/{tripId}/rating:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Ratings]
+      summary: Calificar el viaje (una calificación por usuario por viaje)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RatingRequest'
+      responses:
+        '201':
+          description: Calificación registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rating'
+        '409':
+          description: Este usuario ya calificó este viaje
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ------------------------------------------------------------------
+  # DESPACHO
+  # ------------------------------------------------------------------
+  /trips/{tripId}/dispatch/start:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Dispatch]
+      summary: Disparar la búsqueda automática de conductor
+      description: >
+        Solo válido para NORMAL/NOCTURNO con status=QUOTED. Ejecuta el
+        filtro de elegibilidad (DSP-002) y el score ponderado (DSP-003),
+        y envía la oferta al candidato mejor puntuado. FORANEO nunca usa
+        este endpoint — ver /dispatch/manual-assign.
+      responses:
+        '200':
+          description: Viaje en SEARCHING_DRIVER, oferta enviada al primer candidato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '409':
+          description: Categoría FORANEO no admite despacho automático
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /trips/{tripId}/dispatch/candidates:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [Dispatch]
+      summary: Ver candidatos elegibles y su score (para revisión del operador)
+      responses:
+        '200':
+          description: Lista ordenada por score descendente
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DispatchCandidate'
+
+  /dispatch/offers/pending:
+    get:
+      tags: [Dispatch]
+      summary: Ofertas pendientes del conductor autenticado (para polling)
+      description: >
+        Agregado durante la implementación del paso 7: la app del
+        conductor necesita una forma de descubrir sus propias ofertas sin
+        conocer el tripId de antemano. Sin WebSockets todavía (ver
+        docs/02-especificacion-paso7.md, "Explícitamente fuera de
+        alcance"), el cliente debe consultar este endpoint periódicamente.
+      responses:
+        '200':
+          description: Ofertas sin responder del conductor autenticado
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    offerId:
+                      type: string
+                      format: uuid
+                    tripId:
+                      type: string
+                      format: uuid
+                    score:
+                      type: number
+                    offeredAt:
+                      type: string
+                      format: date-time
+                    trip:
+                      $ref: '#/components/schemas/Trip'
+
+  /dispatch/offers/{offerId}/respond:
+    parameters:
+      - name: offerId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Dispatch]
+      summary: El conductor acepta o rechaza una oferta de viaje
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              properties:
+                response:
+                  type: string
+                  enum: [ACCEPTED, REJECTED]
+      responses:
+        '200':
+          description: >
+            Si ACCEPTED, el viaje pasa a DRIVER_ASSIGNED. Si REJECTED,
+            el sistema reintenta con el siguiente candidato del score.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+
+  /dispatch/manual-assign:
+    post:
+      tags: [Dispatch]
+      summary: Asignación manual de conductor por un operador
+      description: >
+        Único camino posible para FORANEO (siempre después de /trips/{tripId}/review).
+        También disponible como excepción manual para NORMAL/NOCTURNO
+        cuando el operador decide no usar el score automático.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualAssignRequest'
+      responses:
+        '200':
+          description: Viaje en DRIVER_ASSIGNED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '409':
+          description: El viaje no está en un estado asignable (ej. FORANEO sin cotizar)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ------------------------------------------------------------------
+  # CONDUCTORES — estado y posición
+  # ------------------------------------------------------------------
+  /drivers/{driverId}/status:
+    parameters:
+      - name: driverId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Drivers]
+      summary: Cambiar el estado del conductor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: '#/components/schemas/DriverStatus'
+      responses:
+        '200':
+          description: Estado actualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  driverId:
+                    type: string
+                    format: uuid
+                  status:
+                    $ref: '#/components/schemas/DriverStatus'
+
+  /drivers/{driverId}/locations:
+    parameters:
+      - name: driverId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Drivers]
+      summary: Enviar la posición GPS actual
+      description: >
+        Frecuencia por defecto 5s, configurable vía configuration
+        (clave gps.interval_seconds) sin publicar una nueva versión de la app.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriverLocationPing'
+      responses:
+        '204':
+          description: Posición registrada
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Coordinates:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+
+    ServiceCategory:
+      type: string
+      enum: [NORMAL, NOCTURNO, FORANEO]
+
+    TripStatus:
+      type: string
+      enum:
+        - REQUESTED
+        - PENDING_REVIEW
+        - QUOTED
+        - SEARCHING_DRIVER
+        - DRIVER_ASSIGNED
+        - DRIVER_EN_ROUTE
+        - DRIVER_ARRIVED
+        - TRIP_STARTED
+        - TRIP_IN_PROGRESS
+        - TRIP_COMPLETED
+        - PAYMENT_PENDING
+        - PAYMENT_CONFIRMED
+        - CLOSED
+        - CANCELLED_BY_PASSENGER
+        - CANCELLED_BY_DRIVER
+        - CANCELLED_BY_SYSTEM
+        - NO_SHOW
+        - DISPUTED
+
+    DriverStatus:
+      type: string
+      enum: [OFFLINE, AVAILABLE, ON_SHIFT, BUSY, PAUSED, BLOCKED, EMERGENCY]
+
+    FareQuoteRequest:
+      type: object
+      required: [origin, destination]
+      properties:
+        origin:
+          $ref: '#/components/schemas/Coordinates'
+        destination:
+          $ref: '#/components/schemas/Coordinates'
+
+    FareQuoteResponse:
+      type: object
+      properties:
+        serviceCategory:
+          $ref: '#/components/schemas/ServiceCategory'
+        estimatedFare:
+          type: number
+          nullable: true
+          description: null cuando serviceCategory=FORANEO (la fija un operador)
+        estimatedDistanceKm:
+          type: number
+        estimatedDurationMin:
+          type: number
+
+    TripCreateRequest:
+      type: object
+      required: [passengerId, origin, destination]
+      properties:
+        passengerId:
+          type: string
+          format: uuid
+        origin:
+          $ref: '#/components/schemas/Coordinates'
+        destination:
+          $ref: '#/components/schemas/Coordinates'
+
+    Trip:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        passengerId:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+          nullable: true
+        vehicleId:
+          type: string
+          format: uuid
+          nullable: true
+        serviceCategory:
+          $ref: '#/components/schemas/ServiceCategory'
+        status:
+          $ref: '#/components/schemas/TripStatus'
+        origin:
+          $ref: '#/components/schemas/Coordinates'
+        destination:
+          $ref: '#/components/schemas/Coordinates'
+        quotedFare:
+          type: number
+          nullable: true
+        quotedBy:
+          type: string
+          format: uuid
+          nullable: true
+          description: operador que autorizó la tarifa manual (solo FORANEO)
+        finalFare:
+          type: number
+          nullable: true
+        requestedAt:
+          type: string
+          format: date-time
+
+    ForaneoReviewRequest:
+      type: object
+      required: [quotedFare]
+      properties:
+        quotedFare:
+          type: number
+        notes:
+          type: string
+
+    DispatchCandidate:
+      type: object
+      properties:
+        driverId:
+          type: string
+          format: uuid
+        vehicleId:
+          type: string
+          format: uuid
+        score:
+          type: number
+        distanceMeters:
+          type: number
+        etaMinutes:
+          type: number
+
+    ManualAssignRequest:
+      type: object
+      required: [tripId, driverId, reason]
+      properties:
+        tripId:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          description: obligatorio por auditoría (regla de oro, sección 117 Parte I)
+
+    PaymentConfirmRequest:
+      type: object
+      required: [method, amount]
+      properties:
+        method:
+          type: string
+          enum: [CASH, CARD_TERMINAL]
+        amount:
+          type: number
+        referenceNumber:
+          type: string
+          description: folio de la terminal bancaria, si aplica (solo auditoría)
+
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tripId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        method:
+          type: string
+          enum: [CASH, CARD_TERMINAL, DIGITAL_INAPP]
+        status:
+          type: string
+          enum: [PENDING, DRIVER_CONFIRMED, DISPUTED]
+
+    RatingRequest:
+      type: object
+      required: [score]
+      properties:
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+
+    Rating:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tripId:
+          type: string
+          format: uuid
+        score:
+          type: integer
+        comment:
+          type: string
+
+    DriverLocationPing:
+      type: object
+      required: [lat, lng, recordedAt]
+      properties:
+        lat:
+          type: number
+        lng:
+          type: number
+        speedKmh:
+          type: number
+        heading:
+          type: number
+        accuracyM:
+          type: number
+        recordedAt:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string

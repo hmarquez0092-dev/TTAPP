@@ -1,8 +1,21 @@
+# Node / NestJS
 node_modules/
+**/node_modules/
 dist/
+**/dist/
 coverage/
+**/coverage/
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example
 .env.development
 .env.test
 .env.staging
 .env.production
-*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
